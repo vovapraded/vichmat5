@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Callable
 import sys
+import math
+
 
 def check_unique_x(x):
     if len(np.unique(x)) != len(x):
@@ -53,47 +55,114 @@ def newton_finite_diff(x, y, x_interp):
         result += t_term * diff_table[0][i]
     return result
 
-def stirling_interpolation(x, y, x_interp):
-    n = len(x)
+def stirling_interpolation_auto(xs, ys, x_interp):
+    """
+    Интерполяция по формуле Стирлинга (автоматическая сборка ряда).
+    xs, ys - массивы узлов и значений
+    x_interp - точка интерполяции
+    """
+    n = len(xs)
     if n % 2 == 0:
-        raise ValueError("Стирлинг работает только для нечётного числа узлов!")
-    h = x[1] - x[0]
-    m = n // 2
-    t = (x_interp - x[m]) / h
-    diff_table = np.zeros((n, n))
-    diff_table[:, 0] = y
-    for j in range(1, n):
-        for i in range(n - j):
-            diff_table[i][j] = diff_table[i + 1][j - 1] - diff_table[i][j - 1]
-    res = diff_table[m, 0]
-    fact = 1
-    tt = t
-    for k in range(1, m+1):
-        d1 = (diff_table[m - k, 2 * k - 1] + diff_table[m - k + 1, 2 * k - 1]) / 2
-        d2 = diff_table[m - k, 2 * k]
-        fact *= (t ** 2 - (k - 1) ** 2) / (2 * k)
-        res += tt * d1 + fact * d2
-        tt *= (t ** 2 - k ** 2) / (2 * k + 1)
-    return res
+        raise ValueError("Стирлинг: только нечётное число узлов!")
 
-def bessel_interpolation(x, y, x_interp):
-    n = len(x)
+    m = n // 2
+    h = xs[1] - xs[0]
+    t = (x_interp - xs[m]) / h
+
+    # Строим таблицу конечных разностей
+    diffs = [ys.copy()]
+    for k in range(1, n):
+        last = diffs[-1]
+        diffs.append([last[i + 1] - last[i] for i in range(len(last) - 1)])
+
+    # Сборка ряда
+    result = ys[m]
+    factorial = math.factorial
+
+    # Для четных членов берем центральную разность
+    # Для нечетных — среднее двух центральных разностей (симметрия)
+    for k in range(1, n):
+        # генерируем "многочлен" вида t(t^2-1)(t^2-4)... по правилу
+        mult = 1
+        for j in range(1, k + 1):
+            if k % 2 == 1 and j == 1:
+                mult *= t
+            elif k % 2 == 0 and j == 1:
+                mult *= t ** 2 - ((j - 1) ** 2)
+            else:
+                mult *= t ** 2 - ((j - 1) ** 2)
+        if k % 2 == 1:
+            idx1 = m - k // 2
+            idx2 = m - k // 2 - 1
+            if 0 <= idx1 < len(diffs[k]) and 0 <= idx2 < len(diffs[k]):
+                central_diff = (diffs[k][idx1] + diffs[k][idx2]) / 2
+            else:
+                central_diff = 0
+        else:
+            idx = m - k // 2
+            if 0 <= idx < len(diffs[k]):
+                central_diff = diffs[k][idx]
+            else:
+                central_diff = 0
+        result += mult / factorial(k) * central_diff
+    return result
+
+
+def bessel_interpolation_auto(xs, ys, x_interp):
+    """
+    Интерполяция по формуле Бесселя (автоматическая сборка ряда).
+    xs, ys - массивы узлов и значений
+    x_interp - точка интерполяции
+    """
+    n = len(xs)
     if n % 2 != 0:
-        raise ValueError("Бессель работает только для чётного числа узлов!")
-    h = x[1] - x[0]
+        raise ValueError("Бессель: только чётное число узлов!")
+
     m = n // 2 - 1
-    t = (x_interp - (x[m] + x[m+1]) / 2) / h
-    diff_table = np.zeros((n, n))
-    diff_table[:, 0] = y
-    for j in range(1, n):
-        for i in range(n - j):
-            diff_table[i][j] = diff_table[i + 1][j - 1] - diff_table[i][j - 1]
-    res = (diff_table[m, 0] + diff_table[m+1, 0]) / 2
-    res += t * diff_table[m, 1]
-    res += (t**2 - 0.25) * (diff_table[m, 2] + diff_table[m+1, 2]) / 2 / 2
-    res += t * (t**2 - 1) * (diff_table[m, 3] + diff_table[m+1, 3]) / 2 / 6
-    res += (t**2 - 1) * (t**2 - 2.25) * (diff_table[m, 4] + diff_table[m+1, 4]) / 2 / 24
-    return res
+    h = xs[1] - xs[0]
+    x0 = (xs[m] + xs[m + 1]) / 2
+    t = (x_interp - x0) / h
+
+    # Строим таблицу конечных разностей
+    diffs = [ys.copy()]
+    for k in range(1, n):
+        last = diffs[-1]
+        diffs.append([last[i + 1] - last[i] for i in range(len(last) - 1)])
+
+    # Сборка ряда
+    result = (ys[m] + ys[m + 1]) / 2
+    factorial = math.factorial
+
+    # Суммируем все члены до конца ряда
+    for k in range(1, n):
+        # Для Бесселя четные и нечетные члены чередуются с коэффициентами t, t^2 - 1/4 и т.д.
+        if k % 2 == 1:
+            # нечетные члены — Δ^(2k-1)
+            idx = m - (k // 2)
+            if 0 <= idx < len(diffs[k]):
+                diff = diffs[k][idx]
+            else:
+                diff = 0
+            mult = t
+            for j in range(1, k // 2 + 1):
+                mult *= t ** 2 - (j - 0.5) ** 2
+            term = mult / factorial(k) * diff
+            result += term
+        else:
+            # четные члены — среднее Δ^(2k) двух центральных разностей
+            idx1 = m - (k // 2) + 1
+            idx2 = m - (k // 2)
+            if 0 <= idx1 < len(diffs[k]) and 0 <= idx2 < len(diffs[k]):
+                diff = (diffs[k][idx1] + diffs[k][idx2]) / 2
+            else:
+                diff = 0
+            mult = 1
+            for j in range(1, k // 2 + 1):
+                mult *= t ** 2 - (j - 0.25) ** 2
+            term = mult / factorial(k) * diff
+            result += term
+    return result
+
 
 # ==== Ввод данных ====
 
@@ -138,6 +207,23 @@ def print_finite_diff_table(x, y):
         row = []
         for j in range(n - i):
             row.append(f"{table[i][j]:10.4f}")
+        print(" ".join(row))
+    return table
+def print_divided_diff_table(x, y):
+    n = len(x)
+    table = np.zeros((n, n))
+    table[:, 0] = y
+    for j in range(1, n):
+        for i in range(n - j):
+            table[i][j] = (table[i+1][j-1] - table[i][j-1]) / (x[i+j] - x[i])
+    # Печать
+    header = ["x", "f[x]", *[" " * 3 + f"Δ^{j}f" for j in range(1, n)]]
+    print("\nТаблица разделённых разностей Ньютона:")
+    print(" ".join(f"{h:>13}" for h in header))
+    for i in range(n):
+        row = [f"{x[i]:13.6f}", f"{table[i, 0]:13.6f}"]
+        for j in range(1, n - i):
+            row.append(f"{table[i, j]:13.6f}")
         print(" ".join(row))
     return table
 
@@ -185,7 +271,7 @@ def main():
     check_unique_x(x)
 
     x_query = float(input("Введите значение x для интерполяции: "))
-    print_finite_diff_table(x, y)
+    print_divided_diff_table(x, y)
 
     methods = []
     # Всегда считаем Лагранжа и Ньютона по разделённым разностям
@@ -200,22 +286,23 @@ def main():
 
     # Только для равномерной сетки — конечные разности, Стирлинг, Бессель
     if is_uniform_grid(x):
+        print_finite_diff_table(x, y)
         newt_fin_val = newton_finite_diff(x, y, x_query)
         print(f"[Newton (finite)]    f({x_query}) = {newt_fin_val:.6f}")
         methods.append(("Ньютон (кон.р.)", lambda xx: newton_finite_diff(x, y, xx), "solid", "tab:green"))
 
         if len(x) % 2 == 1:
             try:
-                stirling_val = stirling_interpolation(x, y, x_query)
+                stirling_val = stirling_interpolation_auto(x, y, x_query)
                 print(f"[Stirling]   f({x_query}) = {stirling_val:.6f}")
-                methods.append(("Стирлинг", lambda xx: stirling_interpolation(x, y, xx), "dashdot", "tab:red"))
+                methods.append(("Стирлинг", lambda xx: stirling_interpolation_auto(x, y, xx), "dashdot", "tab:red"))
             except Exception as e:
                 print(f"Ошибка Стирлинга: {e}")
         if len(x) % 2 == 0:
             try:
-                bessel_val = bessel_interpolation(x, y, x_query)
+                bessel_val = bessel_interpolation_auto(x, y, x_query)
                 print(f"[Bessel]     f({x_query}) = {bessel_val:.6f}")
-                methods.append(("Бессель", lambda xx: bessel_interpolation(x, y, xx), "dotted", "tab:brown"))
+                methods.append(("Бессель", lambda xx: bessel_interpolation_auto(x, y, xx), "dotted", "tab:brown"))
             except Exception as e:
                 print(f"Ошибка Бесселя: {e}")
     else:
